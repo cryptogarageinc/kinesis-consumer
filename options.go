@@ -90,3 +90,38 @@ func WithShardClosedHandler(h ShardClosedHandler) Option {
 		c.shardClosedHandler = h
 	}
 }
+
+// WithSubscribe set the subscribe flag
+func WithSubscribe(a bool) Option {
+	return func(c *Consumer) {
+		c.isSubscribe = a
+	}
+}
+
+// WithConsumerName set the consumer name
+func WithConsumerName(a string) Option {
+	return func(c *Consumer) {
+		c.consumerName = a
+	}
+}
+
+// WithConsumerARN set the consumer ARN
+func WithConsumerARN(a string) Option {
+	return func(c *Consumer) {
+		c.consumerARN = a
+	}
+}
+
+// WithRefreshSubscribeInterval overrides the subscribe refreshing interval for the consumer
+func WithRefreshSubscribeInterval(d time.Duration) Option {
+	return func(c *Consumer) {
+		c.refreshSubscribeInterval = d
+	}
+}
+
+// WithRetrySubscribeInterval overrides the subscribe API recall interval
+func WithRetrySubscribeInterval(d time.Duration) Option {
+	return func(c *Consumer) {
+		c.retrySubscribeInterval = d
+	}
+}
