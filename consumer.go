@@ -18,6 +18,14 @@ import (
 	"github.com/awslabs/kinesis-aggregation/go/deaggregator"
 )
 
+var (
+	ScanWithGetRecords       ScanMethod = "GetRecords"       // scan using GetRecords
+	ScanWithSubscribeToShard ScanMethod = "SubscribeToShard" // scan using SubscribeToShard
+)
+
+// ScanMethod is scanning type.
+type ScanMethod string
+
 // Record wraps the record returned from the Kinesis library and
 // extends to include the shard id.
 type Record struct {
@@ -44,6 +52,7 @@ func New(streamName string, opts ...Option) (*Consumer, error) {
 		},
 		scanInterval: 250 * time.Millisecond,
 		maxRecords:   10000,
+		scanMethod:   ScanWithGetRecords,
 
 		refreshSubscribeInterval: 4 * time.Minute,
 		retrySubscribeInterval:   500 * time.Millisecond,
@@ -69,7 +78,7 @@ func New(streamName string, opts ...Option) (*Consumer, error) {
 		c.group = NewAllGroup(c.client, c.store, streamName, c.logger)
 	}
 
-	if c.isSubscribe && c.consumerName == "" && c.consumerARN == "" {
+	if c.scanMethod == ScanWithSubscribeToShard && c.consumerName == "" && c.consumerARN == "" {
 		return nil, errors.New("must consumer name or consumer ARN for subscribe")
 	}
 
@@ -91,7 +100,7 @@ type Consumer struct {
 	isAggregated             bool
 	shardClosedHandler       ShardClosedHandler
 
-	isSubscribe              bool
+	scanMethod               ScanMethod
 	consumerName             string
 	consumerARN              string
 	refreshSubscribeInterval time.Duration
@@ -119,7 +128,7 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 	defer cancel()
 
 	var consumerARN string
-	if !c.isSubscribe {
+	if c.scanMethod != ScanWithSubscribeToShard {
 		// polling only
 	} else if c.consumerARN != "" {
 		consumerARN = c.consumerARN
@@ -130,9 +139,7 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 			return err
 		}
 		consumerARN = cmARN
-		defer func() {
-			_ = c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
-		}()
+		defer c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
 	}
 
 	var (
@@ -153,7 +160,7 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 		go func(shardID string) {
 			defer wg.Done()
 			var err error
-			if c.isSubscribe {
+			if c.scanMethod == ScanWithSubscribeToShard {
 				err = c.SubscribeShard(ctx, consumerARN, shardID, fn)
 			} else {
 				err = c.ScanShard(ctx, shardID, fn)
@@ -222,6 +229,8 @@ func (c *Consumer) ScanShard(ctx context.Context, shardID string, fn ScanFunc) e
 				return fmt.Errorf("get shard iterator error: %w", err)
 			}
 		} else {
+			c.logger.Log(LogDebug, LogConsumer, "get records success:",
+				LogString("shardID", shardID), LogString("lastSeqNum", lastSeqNum))
 			// loop over records, call callback func
 			var records []*kinesis.Record
 			var err error
@@ -293,9 +302,9 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 	refreshTicker := time.NewTicker(c.refreshSubscribeInterval)
 	defer refreshTicker.Stop()
 
-	evStream, err := c.subscribe(ctx, consumerARN, shardID, lastSeqNum)
+	evStream, err := c.subscribeToShared(ctx, consumerARN, shardID, lastSeqNum)
 	if err != nil {
-		return fmt.Errorf("subscribe error: %w", err)
+		return fmt.Errorf("subscribeToShared error: %w", err)
 	}
 	defer func() {
 		if evStream != nil {
@@ -317,9 +326,9 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 
 		if !exist || hasNeedRefresh {
 			oldEvSt := evStream
-			nextStream, err := c.subscribe(ctx, consumerARN, shardID, lastSeqNum)
+			nextStream, err := c.subscribeToShared(ctx, consumerARN, shardID, lastSeqNum)
 			if err != nil {
-				return fmt.Errorf("re-subscribe error: %w", err)
+				return fmt.Errorf("re-subscribeToShared error: %w", err)
 			}
 			evStream = nextStream
 			_ = oldEvSt.Close()
@@ -345,12 +354,12 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 				return nil
 			default:
 				err := fn(&Record{r, shardID, subEvent.MillisBehindLatest})
-				if err != nil {
-					if err != ErrSkipCheckpoint {
-						return err
-					}
-					// skip checkpoint
-				} else {
+				switch {
+				case err == ErrSkipCheckpoint:
+					// skip
+				case err != nil:
+					return err
+				default:
 					if err := c.group.SetCheckpoint(c.streamName, shardID, *r.SequenceNumber); err != nil {
 						return err
 					}
@@ -361,7 +370,7 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 			}
 		}
 
-		if subEvent.ContinuationSequenceNumber == nil {
+		if isShardClosed(subEvent.ContinuationSequenceNumber, nil) {
 			c.logger.Log(LogConsumer, "shard closed:", LogString("shardID", shardID))
 			if c.shardClosedHandler != nil {
 				err := c.shardClosedHandler(c.streamName, shardID)
@@ -458,7 +467,7 @@ func (c *Consumer) deregisterConsumer(consumerName, consumerARN, streamARN strin
 	return err
 }
 
-func (c *Consumer) subscribe(ctx context.Context, consumerARN, shardID, seqNum string) (*kinesis.SubscribeToShardEventStream, error) {
+func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, seqNum string) (*kinesis.SubscribeToShardEventStream, error) {
 	params := &kinesis.SubscribeToShardInput{
 		ConsumerARN:      aws.String(consumerARN),
 		ShardId:          aws.String(shardID),

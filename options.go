@@ -1,6 +1,7 @@
 package consumer
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
@@ -91,10 +92,15 @@ func WithShardClosedHandler(h ShardClosedHandler) Option {
 	}
 }
 
-// WithSubscribe set the subscribe flag
-func WithSubscribe(a bool) Option {
+// WithScanMethod overrides the scan method
+func WithScanMethod(a ScanMethod) Option {
 	return func(c *Consumer) {
-		c.isSubscribe = a
+		switch a {
+		case ScanWithGetRecords, ScanWithSubscribeToShard:
+			c.scanMethod = a
+		default:
+			panic(fmt.Errorf("%s is invalid ScanMethod", string(a)))
+		}
 	}
 }
 
