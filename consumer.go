@@ -128,11 +128,12 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 	defer cancel()
 
 	var consumerARN string
-	if c.scanMethod != ScanWithSubscribeToShard {
-		// polling only
-	} else if c.consumerARN != "" {
-		consumerARN = c.consumerARN
-	} else {
+	switch c.scanMethod {
+	case ScanWithSubscribeToShard:
+		if c.consumerARN != "" {
+			consumerARN = c.consumerARN
+			break
+		}
 		c.logger.Log(LogConsumer, "register consumer:", LogString("consumerName", c.consumerName))
 		cmARN, streamARN, err := c.registerConsumer(ctx, c.streamName, c.consumerName)
 		if err != nil {
@@ -140,6 +141,9 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 		}
 		consumerARN = cmARN
 		defer c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
+
+	case ScanWithGetRecords:
+		// do nothing
 	}
 
 	var (
@@ -425,32 +429,37 @@ func (c *Consumer) registerConsumer(ctx context.Context, streamName, consumerNam
 			ctx, &kinesis.DescribeStreamSummaryInput{
 				StreamName: aws.String(streamName),
 			})
-		if err == credentials.ErrNoValidProvidersFoundInChain {
-			c.logger.Log(LogWarn, LogConsumer, "describe stream summary error retry:", Error(err))
-			time.Sleep(c.retrySubscribeInterval)
-			continue
+		if err != nil {
+			if err == credentials.ErrNoValidProvidersFoundInChain {
+				c.logger.Log(LogWarn, LogConsumer, "describe stream summary error retry:", Error(err))
+				time.Sleep(c.retrySubscribeInterval)
+				continue
+			}
+			c.logger.Log(LogWarn, LogConsumer, "describe stream summary error:", Error(err))
+			break
 		}
-		break
+		break // success
 	}
 	if err != nil {
-		c.logger.Log(LogError, LogConsumer, "describe stream summary error:", Error(err))
+		c.logger.Log(LogError, LogConsumer, "failed to DescribeStreamSummary:", Error(err))
 		return "", "", err
 	}
-	streamARN := streamResp.StreamDescriptionSummary.StreamARN
+	streamARN := aws.StringValue(streamResp.StreamDescriptionSummary.StreamARN)
 
 	consumerResp, err := c.client.RegisterStreamConsumerWithContext(
 		ctx, &kinesis.RegisterStreamConsumerInput{
 			ConsumerName: aws.String(consumerName),
-			StreamARN:    streamARN,
+			StreamARN:    streamResp.StreamDescriptionSummary.StreamARN,
 		})
 	if err != nil {
 		c.logger.Log(LogError, LogConsumer, "register consumer error:", Error(err))
 		return "", "", err
 	}
+	consumerARN := aws.StringValue(consumerResp.Consumer.ConsumerARN)
 	c.logger.Log(LogConsumer, "register consumer success:",
-		LogString("consumerARN", *consumerResp.Consumer.ConsumerARN),
-		LogString("streamARN", *streamARN))
-	return *consumerResp.Consumer.ConsumerARN, *streamARN, nil
+		LogString("consumerARN", consumerARN),
+		LogString("streamARN", streamARN))
+	return consumerARN, streamARN, nil
 }
 
 func (c *Consumer) deregisterConsumer(consumerName, consumerARN, streamARN string) error {
@@ -492,26 +501,38 @@ func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, 
 		LogString("seqNum", seqNum))
 	for i := 0; i < c.retryRegisterCount; i++ {
 		res, err = c.client.SubscribeToShardWithContext(ctx, params)
-		if awserr, ok := err.(awserr.Error); ok {
-			if _, ok := retryableConsumerErrors[awserr.Code()]; ok {
+
+		if err != nil {
+			if c.isRetryableConsumerErrors(err) {
 				c.logger.Log(LogWarn, LogConsumer, "subscribe to shared error retry:", Error(err))
 				time.Sleep(c.retrySubscribeInterval)
 				continue
 			}
+			c.logger.Log(LogError, LogConsumer, "subscribe to shared error:", Error(err))
+			break
 		}
-		break
+		break // success
 	}
-
 	if err != nil {
-		c.logger.Log(LogError, LogConsumer, "subscribe to shared error:", Error(err),
+		c.logger.Log(LogError, LogConsumer, "failed to SubscribeToShard:", Error(err),
 			LogString("consumerARN", consumerARN),
 			LogString("shardID", shardID),
 			LogString("seqNum", seqNum))
 		return nil, err
 	}
+
 	c.logger.Log(LogConsumer, "subscribe to shared success:",
 		LogString("consumerARN", consumerARN),
 		LogString("shardID", shardID),
 		LogString("seqNum", seqNum))
 	return res.EventStream, nil
+}
+
+func (c *Consumer) isRetryableConsumerErrors(err error) bool {
+	if awserr, ok := err.(awserr.Error); ok {
+		if _, ok := retryableConsumerErrors[awserr.Code()]; ok {
+			return true
+		}
+	}
+	return false
 }
