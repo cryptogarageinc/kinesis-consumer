@@ -1,0 +1,17 @@
+service:
+  golangci-lint-version: 1.48.0
+run:
+  deadline: 10m
+  skip-dirs:
+    - cover
+  modules-download-mode: mod
+
+issues:
+  exclude-use-default: false
+
+linters:
+  enable:
+    - exportloopref
+    - goimports
+  disable:
+    - structcheck
