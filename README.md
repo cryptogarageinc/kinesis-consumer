@@ -289,7 +289,7 @@ c, err := consumer.New(
 
 ### Logging
 
-Logging supports the basic built-in logging library or use thrid party external one, so long as
+Logging supports the basic built-in logging library or use third party external one, so long as
 it implements the Logger interface.
 
 For example, to use the builtin logging package, we wrap it with myLogger structure.
@@ -358,7 +358,7 @@ Consume data from the stream:
 
 Please see [CONTRIBUTING.md] for more information. Thank you, [contributors]!
 
-[LICENSE]: /MIT-LICENSE
+[LICENSE]: /LICENSE
 [CONTRIBUTING.md]: /CONTRIBUTING.md
 
 ## License

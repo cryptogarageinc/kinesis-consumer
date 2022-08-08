@@ -67,11 +67,11 @@ func (g *AllGroup) findNewShards(shardc chan *kinesis.Shard) {
 	g.shardMu.Lock()
 	defer g.shardMu.Unlock()
 
-	g.logger.Log("[GROUP]", "fetching shards")
+	g.logger.Log(LogGroup, "fetching shards")
 
 	shards, err := listShards(g.ksis, g.streamName)
 	if err != nil {
-		g.logger.Log("[GROUP] error:", err)
+		g.logger.Log(LogError, LogGroup, "error:", Error(err))
 		return
 	}
 

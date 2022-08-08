@@ -44,3 +44,5 @@ prof.mem
 # Goland files
 .idea/
 tmp/**
+
+/.bin

@@ -1,6 +1,7 @@
 package consumer
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/kinesis/kinesisiface"
@@ -88,5 +89,45 @@ type ShardClosedHandler = func(streamName, shardID string) error
 func WithShardClosedHandler(h ShardClosedHandler) Option {
 	return func(c *Consumer) {
 		c.shardClosedHandler = h
+	}
+}
+
+// WithScanMethod overrides the scan method
+func WithScanMethod(a ScanMethod) Option {
+	return func(c *Consumer) {
+		switch a {
+		case ScanWithGetRecords, ScanWithSubscribeToShard:
+			c.scanMethod = a
+		default:
+			panic(fmt.Errorf("%s is invalid ScanMethod", string(a)))
+		}
+	}
+}
+
+// WithConsumerName set the consumer name
+func WithConsumerName(a string) Option {
+	return func(c *Consumer) {
+		c.consumerName = a
+	}
+}
+
+// WithConsumerARN set the consumer ARN
+func WithConsumerARN(a string) Option {
+	return func(c *Consumer) {
+		c.consumerARN = a
+	}
+}
+
+// WithRefreshSubscribeInterval overrides the subscribe refreshing interval for the consumer
+func WithRefreshSubscribeInterval(d time.Duration) Option {
+	return func(c *Consumer) {
+		c.refreshSubscribeInterval = d
+	}
+}
+
+// WithRetrySubscribeInterval overrides the subscribe API recall interval
+func WithRetrySubscribeInterval(d time.Duration) Option {
+	return func(c *Consumer) {
+		c.retrySubscribeInterval = d
 	}
 }
