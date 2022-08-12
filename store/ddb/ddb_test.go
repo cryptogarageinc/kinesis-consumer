@@ -41,9 +41,13 @@ func TestCheckpointSetting(t *testing.T) {
 	setRetryer := WithRetryer(&r)
 	setRetryer(ckPtr)
 
-	// Test WithDyanmoDBClient
+	// Test WithDynamoDBClient
+	ses, err := session.NewSession(aws.NewConfig())
+	if err != nil {
+		t.Errorf("session.NewSession error. got %v", err)
+	}
 	var fakeDbClient = dynamodb.New(
-		session.New(aws.NewConfig()), &aws.Config{
+		ses, &aws.Config{
 			Region: aws.String("us-west-2"),
 		},
 	)
@@ -69,9 +73,13 @@ func TestNewCheckpointWithOptions(t *testing.T) {
 	var r fakeRetryer
 	setRetryer := WithRetryer(&r)
 
-	// Test WithDyanmoDBClient
+	// Test WithDynamoDBClient
+	ses, err := session.NewSession(aws.NewConfig())
+	if err != nil {
+		t.Errorf("session.NewSession error. got %v", err)
+	}
 	var fakeDbClient = dynamodb.New(
-		session.New(aws.NewConfig()), &aws.Config{
+		ses, &aws.Config{
 			Region: aws.String("us-west-2"),
 		},
 	)

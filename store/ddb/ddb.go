@@ -101,10 +101,10 @@ func (c *Checkpoint) GetCheckpoint(streamName, shardID string) (string, error) {
 		TableName:      aws.String(c.tableName),
 		ConsistentRead: aws.Bool(true),
 		Key: map[string]*dynamodb.AttributeValue{
-			"namespace": &dynamodb.AttributeValue{
+			"namespace": {
 				S: aws.String(namespace),
 			},
-			"shard_id": &dynamodb.AttributeValue{
+			"shard_id": {
 				S: aws.String(shardID),
 			},
 		},
