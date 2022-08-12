@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  push:
+    branches:
+      - master
+      - develop
+
+env:
+  GO_VERSION: 1.18.2
+  GOLANGCI_VERSION: v1.48.0
+
+jobs:
+  test:
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+
+    steps:
+      - name: setup go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: go mod download
+        run: go mod download
+
+      - name: test
+        run: go test ./...
+
+  lint:
+    runs-on: ubuntu-20.04
+    timeout-minutes: 30
+    steps:
+      - name: setup go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: go mod download
+        run: go mod download
+
+      - name: golangci-lint
+        uses: reviewdog/action-golangci-lint@v2
+        with:
+          # Required: the version of golangci-lint is required and must be specified without patch version: we always use the latest patch version.
+          golangci_lint_version: ${{ env.GOLANGCI_VERSION }}
+          # Optional: working directory, useful for monorepos
+          # workdir: app
+
+          filter_mode: nofilter
+          fail_on_error: true
+          go_version: ${{ env.GO_VERSION }}
+          cache: true
+          golangci_lint_flags: "--config=.golangci.yml"
+          reporter: github-pr-review
+
+          # Optional: golangci-lint command line arguments.
+          # args: --issues-exit-code=0
+
+          # Optional: show only new issues if it's a pull request. The default value is `false`.
+          # only-new-issues: true

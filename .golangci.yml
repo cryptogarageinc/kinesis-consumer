@@ -8,6 +8,19 @@ run:
 
 issues:
   exclude-use-default: false
+  exclude-rules:
+    - linters:
+        - errcheck
+      text: "Error return value of `c.SetCheckpoint` is not checked"
+    - linters:
+        - errcheck
+      text: "Error return value of `c.deregisterConsumer` is not checked"
+    - linters:
+        - errcheck
+      text: "Error return value of `c.save` is not checked"
+    - linters:
+        - errcheck
+      text: "Error return value of `dynamodbattribute.UnmarshalMap` is not checked"
 
 linters:
   enable:
