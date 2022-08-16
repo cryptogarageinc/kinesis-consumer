@@ -304,27 +304,43 @@ func (c *Consumer) ScanShard(ctx context.Context, shardID string, initializedSca
 // SubscribeShard subscribe records on a specific shard, calls the callback func
 // for each record and checkpoints the progress of scan.
 func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID string, initializedScanChan chan bool, fn ScanFunc) error {
-	// get last seq number from checkpoint
-	lastSeqNum, err := c.group.GetCheckpoint(c.streamName, shardID)
-	if err != nil {
-		return fmt.Errorf("get checkpoint error: %w", err)
+	var err error
+	var lastSeqNum string
+	var evStream *kinesis.SubscribeToShardEventStream
+
+	for i := 0; i < c.retryRegisterCount; i++ {
+		// get last seq number from checkpoint
+		lastSeqNum, err = c.group.GetCheckpoint(c.streamName, shardID)
+		if err != nil {
+			return fmt.Errorf("get checkpoint error: %w", err)
+		}
+		evStream, err = c.subscribeToShard(ctx, consumerARN, shardID, lastSeqNum, 1)
+		switch {
+		case err != nil && c.isRetryableConsumerErrors(err):
+			continue
+		case err != nil:
+		}
+		break
 	}
-
-	c.logger.Log(LogConsumer, "start subscribe:",
-		LogString("shardID", shardID), LogString("lastSeqNum", lastSeqNum))
-	defer c.logger.Log(LogConsumer, "stop subscribe:", LogString("shardID", shardID))
-	refreshTicker := time.NewTicker(c.refreshSubscribeInterval)
-	defer refreshTicker.Stop()
-
-	evStream, err := c.subscribeToShared(ctx, consumerARN, shardID, lastSeqNum)
 	if err != nil {
-		return fmt.Errorf("subscribeToShared error: %w", err)
+		c.logger.Log(LogError, LogConsumer, "failed to SubscribeToShard:", Error(err),
+			LogString("consumerARN", consumerARN),
+			LogString("shardID", shardID),
+			LogString("seqNum", lastSeqNum))
+		return fmt.Errorf("subscribeToShard error: %w", err)
 	}
 	defer func() {
 		if evStream != nil {
 			_ = evStream.Close()
 		}
 	}()
+
+	c.logger.Log(LogConsumer, "start subscribe:",
+		LogString("shardID", shardID), LogString("lastSeqNum", lastSeqNum))
+	defer c.logger.Log(LogConsumer, "stop subscribe:", LogString("shardID", shardID))
+
+	refreshTicker := time.NewTicker(c.refreshSubscribeInterval)
+	defer refreshTicker.Stop()
 
 	select {
 	case initializedScanChan <- true:
@@ -345,9 +361,13 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 
 		if !exist || hasNeedRefresh {
 			oldEvSt := evStream
-			nextStream, err := c.subscribeToShared(ctx, consumerARN, shardID, lastSeqNum)
+			nextStream, err := c.subscribeToShard(ctx, consumerARN, shardID, lastSeqNum, c.retryRegisterCount)
 			if err != nil {
-				return fmt.Errorf("re-subscribeToShared error: %w", err)
+				c.logger.Log(LogError, LogConsumer, "failed to SubscribeToShard:", Error(err),
+					LogString("consumerARN", consumerARN),
+					LogString("shardID", shardID),
+					LogString("seqNum", lastSeqNum))
+				return fmt.Errorf("re-subscribeToShard error: %w", err)
 			}
 			evStream = nextStream
 			_ = oldEvSt.Close()
@@ -491,7 +511,7 @@ func (c *Consumer) deregisterConsumer(consumerName, consumerARN, streamARN strin
 	return err
 }
 
-func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, seqNum string) (*kinesis.SubscribeToShardEventStream, error) {
+func (c *Consumer) subscribeToShard(ctx context.Context, consumerARN, shardID, seqNum string, retryCount int) (*kinesis.SubscribeToShardEventStream, error) {
 	params := &kinesis.SubscribeToShardInput{
 		ConsumerARN:      aws.String(consumerARN),
 		ShardId:          aws.String(shardID),
@@ -514,7 +534,7 @@ func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, 
 		LogString("consumerARN", consumerARN),
 		LogString("shardID", shardID),
 		LogString("seqNum", seqNum))
-	for i := 0; i < c.retryRegisterCount; i++ {
+	for i := 0; i < retryCount; i++ {
 		res, err = c.client.SubscribeToShardWithContext(ctx, params)
 
 		if err != nil {
@@ -529,10 +549,6 @@ func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, 
 		break // success
 	}
 	if err != nil {
-		c.logger.Log(LogError, LogConsumer, "failed to SubscribeToShard:", Error(err),
-			LogString("consumerARN", consumerARN),
-			LogString("shardID", shardID),
-			LogString("seqNum", seqNum))
 		return nil, err
 	}
 
