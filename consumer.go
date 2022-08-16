@@ -123,7 +123,10 @@ var ErrSkipCheckpoint = errors.New("skip checkpoint")
 // Scan launches a goroutine to process each of the shards in the stream. The ScanFunc
 // is passed through to each of the goroutines and called with each message pulled from
 // the stream.
-func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
+func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <-chan bool, errChan <-chan error) {
+	initializedScanCn := make(chan bool, 1)
+	errc := make(chan error, 1)
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -137,7 +140,11 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 		c.logger.Log(LogConsumer, "register consumer:", LogString("consumerName", c.consumerName))
 		cmARN, streamARN, err := c.registerConsumer(ctx, c.streamName, c.consumerName)
 		if err != nil {
-			return err
+			errc <- err
+			initializedScanCn <- false
+			close(errc)
+			close(initializedScanCn)
+			return initializedScanCn, errc
 		}
 		consumerARN = cmARN
 		defer c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
@@ -146,10 +153,7 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 		// do nothing
 	}
 
-	var (
-		errc   = make(chan error, 1)
-		shardc = make(chan *kinesis.Shard, 1)
-	)
+	var shardc = make(chan *kinesis.Shard, 1)
 
 	go func() {
 		c.group.Start(ctx, shardc)
@@ -165,9 +169,9 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 			defer wg.Done()
 			var err error
 			if c.scanMethod == ScanWithSubscribeToShard {
-				err = c.SubscribeShard(ctx, consumerARN, shardID, fn)
+				err = c.SubscribeShard(ctx, consumerARN, shardID, initializedScanCn, fn)
 			} else {
-				err = c.ScanShard(ctx, shardID, fn)
+				err = c.ScanShard(ctx, shardID, initializedScanCn, fn)
 			}
 			if err != nil {
 				select {
@@ -184,14 +188,15 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 	go func() {
 		wg.Wait()
 		close(errc)
+		close(initializedScanCn)
 	}()
 
-	return <-errc
+	return initializedScanCn, errc
 }
 
 // ScanShard loops over records on a specific shard, calls the callback func
 // for each record and checkpoints the progress of scan.
-func (c *Consumer) ScanShard(ctx context.Context, shardID string, fn ScanFunc) error {
+func (c *Consumer) ScanShard(ctx context.Context, shardID string, initializedScanChan chan bool, fn ScanFunc) error {
 	// get last seq number from checkpoint
 	lastSeqNum, err := c.group.GetCheckpoint(c.streamName, shardID)
 	if err != nil {
@@ -211,6 +216,11 @@ func (c *Consumer) ScanShard(ctx context.Context, shardID string, fn ScanFunc) e
 	}()
 	scanTicker := time.NewTicker(c.scanInterval)
 	defer scanTicker.Stop()
+
+	select {
+	case initializedScanChan <- true:
+	default:
+	}
 
 	for {
 		resp, err := c.client.GetRecords(&kinesis.GetRecordsInput{
@@ -293,7 +303,7 @@ func (c *Consumer) ScanShard(ctx context.Context, shardID string, fn ScanFunc) e
 
 // SubscribeShard subscribe records on a specific shard, calls the callback func
 // for each record and checkpoints the progress of scan.
-func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID string, fn ScanFunc) error {
+func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID string, initializedScanChan chan bool, fn ScanFunc) error {
 	// get last seq number from checkpoint
 	lastSeqNum, err := c.group.GetCheckpoint(c.streamName, shardID)
 	if err != nil {
@@ -315,6 +325,11 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 			_ = evStream.Close()
 		}
 	}()
+
+	select {
+	case initializedScanChan <- true:
+	default:
+	}
 
 	var event kinesis.SubscribeToShardEventStreamEvent
 	var exist bool
