@@ -124,7 +124,7 @@ var ErrSkipCheckpoint = errors.New("skip checkpoint")
 // is passed through to each of the goroutines and called with each message pulled from
 // the stream.
 func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <-chan bool, errChan <-chan error) {
-	initializedScanCn := make(chan bool, 1)
+	initializedScanCh := make(chan bool, 1)
 	errc := make(chan error, 1)
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -141,10 +141,10 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <
 		cmARN, streamARN, err := c.registerConsumer(ctx, c.streamName, c.consumerName)
 		if err != nil {
 			errc <- err
-			initializedScanCn <- false
+			initializedScanCh <- false
 			close(errc)
-			close(initializedScanCn)
-			return initializedScanCn, errc
+			close(initializedScanCh)
+			return initializedScanCh, errc
 		}
 		consumerARN = cmARN
 		defer c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
@@ -162,36 +162,36 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <
 	}()
 
 	wg := new(sync.WaitGroup)
-	// process each of the shards
-	for shard := range shardc {
-		wg.Add(1)
-		go func(shardID string) {
-			defer wg.Done()
-			var err error
-			if c.scanMethod == ScanWithSubscribeToShard {
-				err = c.SubscribeShard(ctx, consumerARN, shardID, initializedScanCn, fn)
-			} else {
-				err = c.ScanShard(ctx, shardID, initializedScanCn, fn)
-			}
-			if err != nil {
-				select {
-				case errc <- fmt.Errorf("shard %s error: %w", shardID, err):
-					// first error to occur
-					cancel()
-				default:
-					// error has already occurred
-				}
-			}
-		}(aws.StringValue(shard.ShardId))
-	}
-
 	go func() {
+		// process each of the shards
+		for shard := range shardc {
+			wg.Add(1)
+			go func(shardID string) {
+				defer wg.Done()
+				var err error
+				if c.scanMethod == ScanWithSubscribeToShard {
+					err = c.SubscribeShard(ctx, consumerARN, shardID, initializedScanCh, fn)
+				} else {
+					err = c.ScanShard(ctx, shardID, initializedScanCh, fn)
+				}
+				if err != nil {
+					select {
+					case errc <- fmt.Errorf("shard %s error: %w", shardID, err):
+						// first error to occur
+						cancel()
+					default:
+						// error has already occurred
+					}
+				}
+			}(aws.StringValue(shard.ShardId))
+		}
+
 		wg.Wait()
 		close(errc)
-		close(initializedScanCn)
+		close(initializedScanCh)
 	}()
 
-	return initializedScanCn, errc
+	return initializedScanCh, errc
 }
 
 // ScanShard loops over records on a specific shard, calls the callback func
@@ -506,7 +506,10 @@ func (c *Consumer) deregisterConsumer(consumerName, consumerARN, streamARN strin
 		StreamARN:    aws.String(streamARN),
 	})
 	if err != nil {
-		c.logger.Log(LogError, LogConsumer, "deregister consumer error:", Error(err))
+		c.logger.Log(LogError, LogConsumer, "deregister consumer error:", Error(err),
+			LogString("consumerName", consumerName),
+			LogString("consumerARN", consumerARN),
+			LogString("streamARN", streamARN))
 	}
 	return err
 }
