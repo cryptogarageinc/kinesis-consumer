@@ -129,7 +129,7 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	var consumerARN string
+	var consumerARN, streamARN string
 	switch c.scanMethod {
 	case ScanWithSubscribeToShard:
 		if c.consumerARN != "" {
@@ -137,18 +137,15 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <
 			break
 		}
 		c.logger.Log(LogConsumer, "register consumer:", LogString("consumerName", c.consumerName))
-		cmARN, streamARN, err := c.registerConsumer(ctx, c.streamName, c.consumerName)
+		var err error
+		consumerARN, streamARN, err = c.registerConsumer(ctx, c.streamName, c.consumerName)
 		if err != nil {
 			errc <- err
-			initializedScanCh <- false
 			close(errc)
 			close(initializedScanCh)
 			cancel()
 			return initializedScanCh, errc
 		}
-		consumerARN = cmARN
-		defer c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
-
 	case ScanWithGetRecords:
 		// do nothing
 	}
@@ -156,14 +153,23 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <
 	var shardc = make(chan *kinesis.Shard, 1)
 
 	go func() {
-		defer cancel()
+		defer func() {
+			cancel()
+			close(shardc)
+		}()
 		c.group.Start(ctx, shardc)
 		<-ctx.Done()
-		close(shardc)
 	}()
 
 	go func() {
-		defer cancel()
+		defer func() {
+			cancel()
+			if consumerARN != "" && streamARN != "" {
+				c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
+			}
+			close(errc)
+			close(initializedScanCh)
+		}()
 		wg := new(sync.WaitGroup)
 
 		// process each of the shards
@@ -190,8 +196,6 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) (initializedScanChan <
 		}
 
 		wg.Wait()
-		close(errc)
-		close(initializedScanCh)
 	}()
 
 	return initializedScanCh, errc
