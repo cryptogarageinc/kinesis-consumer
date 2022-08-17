@@ -82,14 +82,8 @@ func TestScan(t *testing.T) {
 		return nil
 	}
 
-	initScanCh, errCh := c.Scan(ctx, fn)
-	err = <-errCh
-	if err != nil {
+	if err := c.Scan(ctx, fn); err != nil {
 		t.Errorf("scan returned unexpected error %v", err)
-	}
-	hasInitScan := <-initScanCh
-	if !hasInitScan {
-		t.Errorf("scan start failed %v", hasInitScan)
 	}
 
 	if res != "firstDatalastData" {
@@ -151,9 +145,7 @@ func TestScanShard(t *testing.T) {
 		return nil
 	}
 
-	ch := make(chan bool, 1)
-	defer close(ch)
-	if err := c.ScanShard(ctx, "myShard", ch, fn); err != nil {
+	if err := c.ScanShard(ctx, "myShard", fn); err != nil {
 		t.Errorf("scan returned unexpected error %v", err)
 	}
 
@@ -204,9 +196,7 @@ func TestScanShard_Cancellation(t *testing.T) {
 		t.Fatalf("new consumer error: %v", err)
 	}
 
-	ch := make(chan bool, 1)
-	defer close(ch)
-	err = c.ScanShard(ctx, "myShard", ch, fn)
+	err = c.ScanShard(ctx, "myShard", fn)
 	if err != nil {
 		t.Fatalf("scan shard error: %v", err)
 	}
@@ -249,9 +239,7 @@ func TestScanShard_SkipCheckpoint(t *testing.T) {
 		return nil
 	}
 
-	ch := make(chan bool, 1)
-	defer close(ch)
-	err = c.ScanShard(ctx, "myShard", ch, fn)
+	err = c.ScanShard(ctx, "myShard", fn)
 	if err != nil {
 		t.Fatalf("scan shard error: %v", err)
 	}
@@ -286,9 +274,7 @@ func TestScanShard_ShardIsClosed(t *testing.T) {
 		return nil
 	}
 
-	ch := make(chan bool, 1)
-	defer close(ch)
-	err = c.ScanShard(context.Background(), "myShard", ch, fn)
+	err = c.ScanShard(context.Background(), "myShard", fn)
 	if err != nil {
 		t.Fatalf("scan shard error: %v", err)
 	}
@@ -322,9 +308,7 @@ func TestScanShard_ShardIsClosed_WithShardClosedHandler(t *testing.T) {
 		t.Fatalf("new consumer error: %v", err)
 	}
 
-	ch := make(chan bool, 1)
-	defer close(ch)
-	err = c.ScanShard(context.Background(), "myShard", ch, fn)
+	err = c.ScanShard(context.Background(), "myShard", fn)
 	if err == nil {
 		t.Fatal("expected an error but didn't get one")
 	}
@@ -361,9 +345,7 @@ func TestScanShard_GetRecordsError(t *testing.T) {
 		t.Fatalf("new consumer error: %v", err)
 	}
 
-	ch := make(chan bool, 1)
-	defer close(ch)
-	err = c.ScanShard(context.Background(), "myShard", ch, fn)
+	err = c.ScanShard(context.Background(), "myShard", fn)
 	if err.Error() != "get records error: aws error message" {
 		t.Fatalf("unexpected error: %v", err)
 	}
