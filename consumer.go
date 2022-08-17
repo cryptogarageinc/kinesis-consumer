@@ -137,6 +137,7 @@ func (c *Consumer) Initialize(ctx context.Context) error {
 		}
 		err = c.waitForConsumerActive(ctx, c.consumerName, consumerARN, streamARN)
 		if err != nil {
+			c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
 			return err
 		}
 		c.consumerARN = consumerARN
