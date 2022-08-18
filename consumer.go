@@ -106,6 +106,8 @@ type Consumer struct {
 	refreshSubscribeInterval time.Duration
 	retrySubscribeInterval   time.Duration
 	retryRegisterCount       int
+
+	streamARN string
 }
 
 // ScanFunc is the type of the function called for each message read
@@ -120,31 +122,56 @@ type ScanFunc func(*Record) error
 // as an error by any function.
 var ErrSkipCheckpoint = errors.New("skip checkpoint")
 
+// Initialize initializes the consumer.
+func (c *Consumer) Initialize(ctx context.Context) error {
+	switch c.scanMethod {
+	case ScanWithSubscribeToShard:
+		if c.consumerARN != "" {
+			break
+		}
+		c.logger.Log(LogConsumer, "register consumer:", LogString("consumerName", c.consumerName))
+		var err error
+		consumerARN, streamARN, err := c.registerConsumer(ctx, c.streamName, c.consumerName)
+		if err != nil {
+			return err
+		}
+		err = c.waitForConsumerActive(ctx, c.consumerName, consumerARN, streamARN)
+		if err != nil {
+			c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
+			return err
+		}
+		c.consumerARN = consumerARN
+		c.streamARN = streamARN
+	case ScanWithGetRecords:
+		// do nothing
+	}
+	return nil
+}
+
+// Finalize performs the termination process of consumer.
+// If you call Initialize, be sure to call Finalize.
+func (c *Consumer) Finalize(ctx context.Context) error {
+	switch c.scanMethod {
+	case ScanWithSubscribeToShard:
+		if c.consumerName == "" || c.consumerARN == "" || c.streamARN == "" {
+			break
+		}
+		err := c.deregisterConsumer(c.consumerName, c.consumerARN, c.streamARN)
+		if err != nil {
+			return err
+		}
+	case ScanWithGetRecords:
+		// do nothing
+	}
+	return nil
+}
+
 // Scan launches a goroutine to process each of the shards in the stream. The ScanFunc
 // is passed through to each of the goroutines and called with each message pulled from
 // the stream.
 func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	var consumerARN string
-	switch c.scanMethod {
-	case ScanWithSubscribeToShard:
-		if c.consumerARN != "" {
-			consumerARN = c.consumerARN
-			break
-		}
-		c.logger.Log(LogConsumer, "register consumer:", LogString("consumerName", c.consumerName))
-		cmARN, streamARN, err := c.registerConsumer(ctx, c.streamName, c.consumerName)
-		if err != nil {
-			return err
-		}
-		consumerARN = cmARN
-		defer c.deregisterConsumer(c.consumerName, consumerARN, streamARN)
-
-	case ScanWithGetRecords:
-		// do nothing
-	}
 
 	var (
 		errc   = make(chan error, 1)
@@ -165,7 +192,7 @@ func (c *Consumer) Scan(ctx context.Context, fn ScanFunc) error {
 			defer wg.Done()
 			var err error
 			if c.scanMethod == ScanWithSubscribeToShard {
-				err = c.SubscribeShard(ctx, consumerARN, shardID, fn)
+				err = c.SubscribeShard(ctx, c.consumerARN, shardID, fn)
 			} else {
 				err = c.ScanShard(ctx, shardID, fn)
 			}
@@ -306,9 +333,9 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 	refreshTicker := time.NewTicker(c.refreshSubscribeInterval)
 	defer refreshTicker.Stop()
 
-	evStream, err := c.subscribeToShared(ctx, consumerARN, shardID, lastSeqNum)
+	evStream, err := c.subscribeToShard(ctx, consumerARN, shardID, lastSeqNum)
 	if err != nil {
-		return fmt.Errorf("subscribeToShared error: %w", err)
+		return fmt.Errorf("subscribeToShard error: %w", err)
 	}
 	defer func() {
 		if evStream != nil {
@@ -330,9 +357,9 @@ func (c *Consumer) SubscribeShard(ctx context.Context, consumerARN, shardID stri
 
 		if !exist || hasNeedRefresh {
 			oldEvSt := evStream
-			nextStream, err := c.subscribeToShared(ctx, consumerARN, shardID, lastSeqNum)
+			nextStream, err := c.subscribeToShard(ctx, consumerARN, shardID, lastSeqNum)
 			if err != nil {
-				return fmt.Errorf("re-subscribeToShared error: %w", err)
+				return fmt.Errorf("re-subscribeToShard error: %w", err)
 			}
 			evStream = nextStream
 			_ = oldEvSt.Close()
@@ -471,12 +498,59 @@ func (c *Consumer) deregisterConsumer(consumerName, consumerARN, streamARN strin
 		StreamARN:    aws.String(streamARN),
 	})
 	if err != nil {
-		c.logger.Log(LogError, LogConsumer, "deregister consumer error:", Error(err))
+		c.logger.Log(LogError, LogConsumer, "deregister consumer error:", Error(err),
+			LogString("consumerName", consumerName),
+			LogString("consumerARN", consumerARN),
+			LogString("streamARN", streamARN))
 	}
 	return err
 }
 
-func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, seqNum string) (*kinesis.SubscribeToShardEventStream, error) {
+func (c *Consumer) waitForConsumerActive(ctx context.Context, consumerName, consumerARN, streamARN string) error {
+	params := &kinesis.DescribeStreamConsumerInput{
+		ConsumerName: aws.String(consumerName),
+		ConsumerARN:  aws.String(consumerARN),
+		StreamARN:    aws.String(streamARN),
+	}
+
+	var res *kinesis.DescribeStreamConsumerOutput
+	var err error
+	c.logger.Log(LogConsumer, "describe stream consumer call start:",
+		LogString("consumerName", consumerName),
+		LogString("consumerARN", consumerARN),
+		LogString("streamARN", streamARN))
+	for i := 0; i < c.retryRegisterCount; i++ {
+		res, err = c.client.DescribeStreamConsumerWithContext(ctx, params)
+
+		if err != nil {
+			c.logger.Log(LogError, LogConsumer, "describe stream consumer error:", Error(err))
+			break
+		}
+
+		status := aws.StringValue(res.ConsumerDescription.ConsumerStatus)
+		if status == kinesis.ConsumerStatusActive {
+			break
+		}
+		c.logger.Log(LogWarn, LogConsumer, "describe stream consumer not active. retry:",
+			LogString("ConsumerStatus", status))
+		time.Sleep(c.retrySubscribeInterval)
+	}
+	if err != nil {
+		c.logger.Log(LogError, LogConsumer, "failed to DescribeStreamConsumer:", Error(err),
+			LogString("consumerName", consumerName),
+			LogString("consumerARN", consumerARN),
+			LogString("streamARN", streamARN))
+		return err
+	}
+
+	c.logger.Log(LogConsumer, "describe stream consumer success:",
+		LogString("consumerName", consumerName),
+		LogString("consumerARN", consumerARN),
+		LogString("streamARN", streamARN))
+	return nil
+}
+
+func (c *Consumer) subscribeToShard(ctx context.Context, consumerARN, shardID, seqNum string) (*kinesis.SubscribeToShardEventStream, error) {
 	params := &kinesis.SubscribeToShardInput{
 		ConsumerARN:      aws.String(consumerARN),
 		ShardId:          aws.String(shardID),
@@ -495,7 +569,7 @@ func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, 
 
 	var res *kinesis.SubscribeToShardOutput
 	var err error
-	c.logger.Log(LogConsumer, "subscribe to shared call start:",
+	c.logger.Log(LogConsumer, "subscribe to shard call start:",
 		LogString("consumerARN", consumerARN),
 		LogString("shardID", shardID),
 		LogString("seqNum", seqNum))
@@ -504,11 +578,11 @@ func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, 
 
 		if err != nil {
 			if c.isRetryableConsumerErrors(err) {
-				c.logger.Log(LogWarn, LogConsumer, "subscribe to shared error retry:", Error(err))
+				c.logger.Log(LogWarn, LogConsumer, "subscribe to shard error retry:", Error(err))
 				time.Sleep(c.retrySubscribeInterval)
 				continue
 			}
-			c.logger.Log(LogError, LogConsumer, "subscribe to shared error:", Error(err))
+			c.logger.Log(LogError, LogConsumer, "subscribe to shard error:", Error(err))
 			break
 		}
 		break // success
@@ -521,7 +595,7 @@ func (c *Consumer) subscribeToShared(ctx context.Context, consumerARN, shardID, 
 		return nil, err
 	}
 
-	c.logger.Log(LogConsumer, "subscribe to shared success:",
+	c.logger.Log(LogConsumer, "subscribe to shard success:",
 		LogString("consumerARN", consumerARN),
 		LogString("shardID", shardID),
 		LogString("seqNum", seqNum))
