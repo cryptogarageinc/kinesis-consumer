@@ -3,7 +3,7 @@ module github.com/cryptogarageinc/kinesis-consumer/pkg/zap
 go 1.18
 
 require (
-	github.com/cryptogarageinc/kinesis-consumer v1.0.1
+	github.com/cryptogarageinc/kinesis-consumer v1.0.2
 	go.uber.org/zap v1.17.0
 )
 
