@@ -3,8 +3,8 @@ github.com/aws/aws-sdk-go v1.44.66 h1:xdH4EvHyUnkm4I8d536ui7yMQKYzrkbSDQ2LvRRHqs
 github.com/aws/aws-sdk-go v1.44.66/go.mod h1:y4AeaBuwd2Lk+GepC1E9v0qOiTws0MIWAX4oIKwKHZo=
 github.com/awslabs/kinesis-aggregation/go v0.0.0-20200810181507-d352038274c0 h1:D97PNkeea5i2Sbq844BdbULqI5pv7yQw4thPwqEX504=
 github.com/awslabs/kinesis-aggregation/go v0.0.0-20200810181507-d352038274c0/go.mod h1:SghidfnxvX7ribW6nHI7T+IBbc9puZ9kk5Tx/88h8P4=
-github.com/cryptogarageinc/kinesis-consumer v1.0.0 h1:IHN03EzaN5UOWzg90SHUZWtoQB2FZVksACh9v5DJg5w=
-github.com/cryptogarageinc/kinesis-consumer v1.0.0/go.mod h1:w5Dsv5aenYeluu7PKySMPlLrEQ9wwTU83UbkPABULh0=
+github.com/cryptogarageinc/kinesis-consumer v1.0.1 h1:NAXmlxgLNrCX3rVp1s3V5gilxmINfekI+MgpU8I/9K0=
+github.com/cryptogarageinc/kinesis-consumer v1.0.1/go.mod h1:w5Dsv5aenYeluu7PKySMPlLrEQ9wwTU83UbkPABULh0=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
