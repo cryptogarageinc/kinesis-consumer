@@ -17,9 +17,9 @@ import (
 type Option func(*Checkpoint)
 
 // WithMaxInterval sets the flush interval
-func WithMaxInterval(maxInterval time.Duration) Option {
+func WithSaveInterval(saveInterval time.Duration) Option {
 	return func(c *Checkpoint) {
-		c.maxInterval = maxInterval
+		c.saveInterval = saveInterval
 	}
 }
 
@@ -41,13 +41,13 @@ func WithRetryer(r Retryer) Option {
 func New(appName, tableName string, opts ...Option) (*Checkpoint, error) {
 
 	ck := &Checkpoint{
-		tableName:   tableName,
-		appName:     appName,
-		maxInterval: time.Duration(1 * time.Minute),
-		done:        make(chan struct{}),
-		mu:          &sync.Mutex{},
-		checkpoints: map[key]string{},
-		retryer:     &DefaultRetryer{},
+		tableName:    tableName,
+		appName:      appName,
+		saveInterval: time.Duration(1 * time.Minute),
+		done:         make(chan struct{}),
+		mu:           &sync.Mutex{},
+		checkpoints:  map[key]string{},
+		retryer:      &DefaultRetryer{},
 	}
 
 	for _, opt := range opts {
@@ -63,21 +63,23 @@ func New(appName, tableName string, opts ...Option) (*Checkpoint, error) {
 		ck.client = dynamodb.New(newSession)
 	}
 
-	go ck.loop()
+	if ck.saveInterval > 0 {
+		go ck.loop()
+	}
 
 	return ck, nil
 }
 
 // Checkpoint stores and retreives the last evaluated key from a DDB scan
 type Checkpoint struct {
-	tableName   string
-	appName     string
-	client      dynamodbiface.DynamoDBAPI
-	maxInterval time.Duration
-	mu          *sync.Mutex // protects the checkpoints
-	checkpoints map[key]string
-	done        chan struct{}
-	retryer     Retryer
+	tableName    string
+	appName      string
+	client       dynamodbiface.DynamoDBAPI
+	saveInterval time.Duration
+	mu           *sync.Mutex // protects the checkpoints
+	checkpoints  map[key]string
+	done         chan struct{}
+	retryer      Retryer
 }
 
 type key struct {
@@ -119,13 +121,27 @@ func (c *Checkpoint) GetCheckpoint(streamName, shardID string) (string, error) {
 	}
 
 	var i item
-	dynamodbattribute.UnmarshalMap(resp.Item, &i)
+	if err := dynamodbattribute.UnmarshalMap(resp.Item, &i); err != nil {
+		return "", nil
+	}
 	return i.SequenceNumber, nil
 }
 
 // SetCheckpoint stores a checkpoint for a shard (e.g. sequence number of last record processed by application).
 // Upon failover, record processing is resumed from this point.
 func (c *Checkpoint) SetCheckpoint(streamName, shardID, sequenceNumber string) error {
+	if err := c.setCheckpoint(streamName, shardID, sequenceNumber); err != nil {
+		return err
+	}
+	if c.saveInterval == 0 {
+		if err := c.save(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Checkpoint) setCheckpoint(streamName, shardID, sequenceNumber string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -149,7 +165,7 @@ func (c *Checkpoint) Shutdown() error {
 }
 
 func (c *Checkpoint) loop() {
-	tick := time.NewTicker(c.maxInterval)
+	tick := time.NewTicker(c.saveInterval)
 	defer tick.Stop()
 	defer close(c.done)
 
