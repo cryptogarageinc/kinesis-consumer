@@ -32,8 +32,8 @@ func TestCheckpointSetting(t *testing.T) {
 	var ck Checkpoint
 	ckPtr := &ck
 
-	// Test WithMaxInterval
-	setInterval := WithMaxInterval(time.Duration(2 * time.Minute))
+	// Test WithSaveInterval
+	setInterval := WithSaveInterval(time.Duration(2 * time.Minute))
 	setInterval(ckPtr)
 
 	// Test WithRetryer
@@ -54,8 +54,8 @@ func TestCheckpointSetting(t *testing.T) {
 	setDDBClient := WithDynamoClient(fakeDbClient)
 	setDDBClient(ckPtr)
 
-	if ckPtr.maxInterval != time.Duration(2*time.Minute) {
-		t.Errorf("new checkpoint maxInterval expected 2 minute. got %v", ckPtr.maxInterval)
+	if ckPtr.saveInterval != time.Duration(2*time.Minute) {
+		t.Errorf("new checkpoint maxInterval expected 2 minute. got %v", ckPtr.saveInterval)
 	}
 	if ckPtr.retryer.ShouldRetry(nil) != false {
 		t.Errorf("new checkpoint retryer ShouldRetry always returns %v . got %v", false, ckPtr.retryer.ShouldRetry(nil))
@@ -67,7 +67,7 @@ func TestCheckpointSetting(t *testing.T) {
 
 func TestNewCheckpointWithOptions(t *testing.T) {
 	// Test WithMaxInterval
-	setInterval := WithMaxInterval(time.Duration(2 * time.Minute))
+	setInterval := WithSaveInterval(time.Duration(2 * time.Minute))
 
 	// Test WithRetryer
 	var r fakeRetryer
@@ -96,11 +96,11 @@ func TestNewCheckpointWithOptions(t *testing.T) {
 		t.Errorf("new checkpoint app name expected %v. got %v", "testapp", ckPtr.appName)
 	}
 	if ckPtr.tableName != "testtable" {
-		t.Errorf("new checkpoint table expected %v. got %v", "testtable", ckPtr.maxInterval)
+		t.Errorf("new checkpoint table expected %v. got %v", "testtable", ckPtr.saveInterval)
 	}
 
-	if ckPtr.maxInterval != time.Duration(2*time.Minute) {
-		t.Errorf("new checkpoint maxInterval expected 2 minute. got %v", ckPtr.maxInterval)
+	if ckPtr.saveInterval != time.Duration(2*time.Minute) {
+		t.Errorf("new checkpoint saveInterval expected 2 minute. got %v", ckPtr.saveInterval)
 	}
 	if ckPtr.retryer.ShouldRetry(nil) != false {
 		t.Errorf("new checkpoint retryer ShouldRetry always returns %v . got %v", false, ckPtr.retryer.ShouldRetry(nil))

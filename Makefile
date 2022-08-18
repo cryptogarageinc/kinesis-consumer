@@ -20,3 +20,5 @@ format:
 .PHONY: lint
 lint:
 	ls ./.bin/golangci-lint && ./.bin/golangci-lint run || golangci-lint run
+	ls ./.bin/golangci-lint && cd pkg/zap && ../../.bin/golangci-lint run ||\
+	cd pkg/zap && golangci-lint run
