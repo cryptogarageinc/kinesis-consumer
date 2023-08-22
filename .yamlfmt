@@ -1,0 +1,18 @@
+# https://github.com/google/yamlfmt/blob/v0.9.0/docs/config-file.md#configuration
+line_ending: 'lf'
+doublestar: true
+include:
+  - '.github/**/*.{yaml,yml}'
+  - './docker-*.{yaml,yml}'
+  - './.golangci.yml'
+
+formatter:
+  # 使用するフォーマッター
+  type: basic
+  # フォーマッターの設定 ( https://github.com/google/yamlfmt/blob/v0.9.0/docs/config-file.md#basic-formatter )
+  indent: 2
+  retain_line_breaks: true
+  max_line_length: 0
+  scan_folded_as_literal: true
+  drop_merge_tag: true
+  pad_line_comments: 1
