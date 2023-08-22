@@ -3,7 +3,7 @@ module github.com/cryptogarageinc/kinesis-consumer
 go 1.18
 
 require (
-	github.com/aws/aws-sdk-go v1.44.66
+	github.com/aws/aws-sdk-go v1.44.328
 	github.com/awslabs/kinesis-aggregation/go v0.0.0-20200810181507-d352038274c0
 )
 
